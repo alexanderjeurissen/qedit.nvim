@@ -34,6 +34,8 @@ function module.write()
   local old_modeline = vim.o.modeline
   vim.o.modeline  = false -- prevents errors when entering large buffers
 
+  local modifications = 0
+
   for idx=1, list_count do
     local item = new_list[idx]
 
@@ -41,23 +43,17 @@ function module.write()
     if item.valid == 0 then list:next(1, list_count); goto skip end
 
     -- 1. trim so we don't replace whitespace
-    -- 2. TODO: somehow vim does not render more then 180 lines in qf list
-    -- 3. TODO: we need to replace the old qf description instead of the current line
-    -- As the current line can be either to long or not represent the content rendered in the list
-    local before = vim.trim(api.nvim_get_current_line()):sub(1, 180)
+    -- 2. use the old qf list text instead of current line as vim cuts off qf descriptions
+    local key = fn.bufname(item.bufnr) .. ':' .. item.lnum .. ':' .. item.col
+    local before = vim.trim(list.items[key].text)
     local after = vim.trim(item.text) -- trim so we dont introduce new whitespace
 
     -- Skip items that did not change
     if before == after then list:next(1, list_count); goto skip end
 
-    print('before')
-    print(before)
-    print('after')
-    print(after)
-
     -- Make the substitution
     cmd(item.lnum .. "snomagic/\\V" .. escape(before) .. '/' .. escape(after) .. '/')
-
+    modifications = modifications + 1
     if module.settings.write == 1 then cmd('silent! write!') end
 
     list:next(1, list_count)
@@ -66,7 +62,7 @@ function module.write()
   end
 
   vim.o.modeline = old_modeline
-  cmd('echohl MoreMsg | echo "Finished substituting ' .. list_count .. ' items" | echohl None')
+  cmd('echohl MoreMsg | echo "Substituted ' .. modifications .. ' items" | echohl None')
 end
 
 function module.attach()
