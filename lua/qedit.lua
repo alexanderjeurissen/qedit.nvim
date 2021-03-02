@@ -1,68 +1,68 @@
 local List = require("qedit/list")
 
---- NVIM INTERNAL SHORTCUTS {{{
 local vim = vim or {}
 local api = vim.api
 local fn = vim.fn
 
 local cmd = api.nvim_command
-local inspect = vim.inspect
--- }}}
 
 local module = {}
-
--- TODO: do we need this ?
 module.settings = { write = 1 }
-
 module.state = {}
 
 local function escape(str) return fn.escape(str, '\\/') end
 
 function module.write()
   local bufnr = api.nvim_get_current_buf()
-  local list = module.state[bufnr]
+  local old_list = module.state[bufnr]
+  local list = List:new()
 
   -- Step 1. Persist modified tmpfile / list state
   cmd('silent! write!')
-  list.refresh() -- reload list based on current list buffer
-  local new_list = list:_list() -- get the updated internal representation of the lits
+  list:refresh() -- reload list based on current list buffer
 
   -- Step 2. Loop over list items and make substitutions
-  list.first() -- go to first item in list
-  list_count = #new_list
+  list:first() -- go to first item in list
 
   local old_modeline = vim.o.modeline
   vim.o.modeline  = false -- prevents errors when entering large buffers
 
-  local modifications = 0
+  local modifications, count = {}, 0
 
-  for idx=1, list_count do
-    local item = new_list[idx]
-
+  for _, item in ipairs(list) do
     -- Skip invalid list items
-    if item.valid == 0 then list:next(1, list_count); goto skip end
+    if item.valid == 0 then list:next(); goto skip end
 
-    -- 1. trim so we don't replace whitespace
-    -- 2. use the old qf list text instead of current line as vim cuts off qf descriptions
-    local key = fn.bufname(item.bufnr) .. ':' .. item.lnum .. ':' .. item.col
-    local before = vim.trim(list.items[key].text)
+    local key, key_parts = List.generate_key(item) -- we need a key so we can quickly retrieve the old qf item
+    local old_item = old_list.items[key]
+
+    -- Skip items that did not exist in old qf list
+    if not old_item then list:next(); goto skip end
+
+    local before = vim.trim(old_item.text) -- trim so we don't replace whitespace
     local after = vim.trim(item.text) -- trim so we dont introduce new whitespace
 
-    -- Skip items that did not change
-    if before == after then list:next(1, list_count); goto skip end
+    -- We dont want to substitute items that did not change
+    if before == after then list:next(); goto skip end
 
-    -- Make the substitution
-    cmd(item.lnum .. "snomagic/\\V" .. escape(before) .. '/' .. escape(after) .. '/')
-    modifications = modifications + 1
+    local substitute = item.lnum .. "snomagic/\\V" .. escape(before) .. '/' .. escape(after) .. '/'
+
+    -- We dont want to substitute when we already made this substitution at the same file/line
+    if modifications[key_parts[1] .. substitute] then list:next(); goto skip end
+
+    cmd(substitute)
+
+    modifications[key_parts[1] .. substitute] = 1
+    count = count + 1
+
     if module.settings.write == 1 then cmd('silent! write!') end
-
-    list:next(1, list_count)
+    list:next()
 
     ::skip::
   end
 
   vim.o.modeline = old_modeline
-  cmd('echohl MoreMsg | echo "Substituted ' .. modifications .. ' items" | echohl None')
+  cmd('echohl MoreMsg | echo "[QEDIT] Substituted ' .. count .. ' items" | echohl None')
 end
 
 function module.attach()
@@ -74,10 +74,9 @@ function module.attach()
   if module.state[bufnr] then return end
 
   -- Step 1. Instantiate list
-  local list = List.create_list()
+  local list = List:new()
 
-  if #list:_list() == 0 then return end
-
+  if next(list.items) == nil then return end
   module.state[bufnr] = list
 
   -- Step 2. make buffer modifiable, and set error format

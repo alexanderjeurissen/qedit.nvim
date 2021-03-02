@@ -2,64 +2,79 @@ local vim = vim or {}
 local api = vim.api
 local fn = vim.fn
 
-local tbl_map = vim.tbl_map
-
 local List = {}
 
-List.read_lines = function(bufnr)
-  return api.nvim_buf_get_lines(bufnr or 0, 0, -1, true)
+List.generate_key = function(item)
+  local parts = { fn.bufname(item.bufnr), item.lnum, item.col }
+  return table.concat(parts, ':'), parts
 end
 
-List.parse_item = function(line)
-  local filename, lnum, col, text = string.match(line, '(.*)|(%d+) col (%d+)|%s(.*)')
-  local key = filename .. ':' .. lnum .. ':' .. col
-
-  return key, { filename = filename, lnum = lnum, col = col, text = text }
-end
-
-List.parse_items = function(lines)
-  if #lines == 1 and lines[1] == '' then return {} end
-
-  local items = {}
-
-  for _, line in ipairs(lines) do
-    local key, value = List.parse_item(line)
-    items[key] = value
-  end
-
-  return items
-end
-
-List.create_list = function(opts)
+List.get_prefix = function()
   local winid = fn.win_getid()
   local info = fn.getwininfo(winid)[1]
 
-  if info['loclist'] == 1 then
-    return require('qedit/location_list'):new(opts)
-  end
-
-  if info['quickfix'] == 1 then
-    return require('qedit/quickfix_list'):new(opts)
-  end
+  if info['loclist'] == 1 then return 'l' end
+  if info['quickfix'] == 1 then return 'c' end
 
   return error('win_id: ' .. winid .. ' has unknown list type')
 end
 
+List.parse_items = function(list)
+  local items = {}
+  local count = 0
+
+  for _, item in ipairs(list) do
+    items[List.generate_key(item)] = item
+    count = count + 1
+  end
+
+  return items, count
+end
+
+function List:cmd(c) vim.cmd(self.prefix .. c) end
+function List:first()
+  List:cmd('first')
+  self.idx = 1
+end
+
+function List:refresh()
+  List:cmd('getbuf')
+  self.idx = 1
+end
+
+function List:_items()
+  if self.prefix == 'c' then return fn.getqflist() end
+  if self.prefix == 'l' then return fn.getloclist() end
+
+  return error('unknown list type')
+end
+
+function List:next()
+  if next(self.items) == nil or self.idx >= self.item_count then
+    return
+  end
+
+  List:cmd('next')
+
+  self.idx = self.idx + 1
+end
+
 function List:new(opts)
+  opts = opts or {}
   local bufnr = api.nvim_get_current_buf()
 
-  -- Step 1. instantiate list defaults
-  local defaults = {}
-  defaults.winid = fn.win_getid()
-  defaults.bufnr = bufnr
-  defaults.tmpfile = fn.tempname() .. '.quickfix_edit'
-  defaults.lines = List.read_lines(bufnr)
-  defaults.items = List.parse_items(defaults.lines)
-  defaults.idx = 1
+  -- Step 1. Set buffer/window info
+  self.idx = 1
+  self.winid = fn.win_getid()
+  self.bufnr = bufnr
+  self.tmpfile = fn.tempname() .. '.quickfix_edit'
 
-  -- Step 2. merge defaults with user provided options
-  opts = opts or {}
-  opts = vim.tbl_extend('force', defaults, opts)
+  -- Step 2. Set prefix and items
+  self.prefix = List.get_prefix()
+  local items, count = List.parse_items(List:_items())
+
+  self.items = items
+  self.item_count = count
 
   -- Step 3. instantiate list
   setmetatable(opts, self)
