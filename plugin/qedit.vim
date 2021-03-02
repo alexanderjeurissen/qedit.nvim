@@ -3,7 +3,6 @@ if !has('nvim-0.5')
     finish
 endif
 
-
 augroup QEDIT
   autocmd!
   autocmd BufWinEnter quickfix :lua require('qedit').attach()
