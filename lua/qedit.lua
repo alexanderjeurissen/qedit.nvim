@@ -15,11 +15,13 @@ local function escape(str) return fn.escape(str, '\\/') end
 function module.write()
   local bufnr = api.nvim_get_current_buf()
   local old_list = module.state[bufnr]
-  local list = List:new()
+  _G.old_list = old_list
 
   -- Step 1. Persist modified tmpfile / list state
   cmd('silent! write!')
-  list:refresh() -- reload list based on current list buffer
+  old_list:refresh() -- reload list based on current list buffer
+  local list = List:new()
+  _G.list = list
 
   -- Step 2. Loop over list items and make substitutions
   list:first() -- go to first item in list
@@ -27,9 +29,10 @@ function module.write()
   local old_modeline = vim.o.modeline
   vim.o.modeline  = false -- prevents errors when entering large buffers
 
-  local modifications, count = {}, 0
+  local modifications = {}
+  local count = 0
 
-  for _, item in ipairs(list) do
+  for _, item in pairs(list.items) do
     -- Skip invalid list items
     if item.valid == 0 then list:next(); goto skip end
 
@@ -48,11 +51,11 @@ function module.write()
     local substitute = item.lnum .. "snomagic/\\V" .. escape(before) .. '/' .. escape(after) .. '/'
 
     -- We dont want to substitute when we already made this substitution at the same file/line
-    if modifications[key_parts[1] .. substitute] then list:next(); goto skip end
+    if modifications[key_parts[1] .. substitute] == true then list:next(); goto skip end
 
     cmd(substitute)
 
-    modifications[key_parts[1] .. substitute] = 1
+    modifications[key_parts[1] .. substitute] = true
     count = count + 1
 
     if module.settings.write == 1 then cmd('silent! write!') end
@@ -74,7 +77,7 @@ function module.attach()
   if module.state[bufnr] then return end
 
   -- Step 1. Instantiate list
-  local list = List:new()
+  local list = List:new({ idx = 3})
 
   if next(list.items) == nil then return end
   module.state[bufnr] = list
